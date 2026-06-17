@@ -54,8 +54,7 @@ jobs:
             },
             "api_keys": {
               "the_odds_api": "${{ secrets.THE_ODDS_API_KEY }}",
-              "kalshi_api_key": "${{ secrets.KALSHI_API_KEY }}",
-              "kalshi_api_secret": "${{ secrets.KALSHI_API_SECRET }}",
+            
               "llm_api_key": "${{ secrets.LLM_API_KEY }}",
               "llm_provider": "groq",
               "llm_model": "llama3-8b-8192"
