@@ -1,5 +1,4 @@
 config.json
-snapshots.jsonl
 calibration.json
 __pycache__/
 *.pyc
