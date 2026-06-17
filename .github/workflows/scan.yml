@@ -1,5 +1,6 @@
 name: Bias Arbitrage Scanner
 
+
 on:
   schedule:
     # Runs every 3 hours
