@@ -1,7 +1,7 @@
 {
   "_comment": "Copy this file to config.json and fill in your values. Never commit config.json.",
 
-  "platforms": ["kalshi"],
+  "platforms": ["polymarket"],
 
   "sport": "UFC",
   "lookahead_days": 7,
