@@ -1,0 +1,53 @@
+{
+  "_comment": "Copy this file to config.json and fill in your values. Never commit config.json.",
+
+  "platforms": ["kalshi"],
+
+  "sport": "UFC",
+  "lookahead_days": 7,
+
+  "risk_mode": "conservative",
+
+  "bankroll": {
+    "mode": "paper",
+    "value": 200,
+    "currency": "ZMW"
+  },
+
+  "kelly_fraction": {
+    "conservative": 0.25,
+    "aggressive": 0.75
+  },
+
+  "edge_threshold_pct": {
+    "conservative": 5.0,
+    "aggressive": 3.0
+  },
+
+  "confidence_cutoff": {
+    "conservative": 0.7,
+    "aggressive": 0.5
+  },
+
+  "alert_sort": {
+    "conservative": "calibrated_confidence",
+    "aggressive": "calibrated_confidence_x_payout_multiple"
+  },
+
+  "api_keys": {
+    "_comment": "Set these as GitHub Actions secrets in production. For local runs, fill in here but NEVER commit this file.",
+    "the_odds_api": "YOUR_THEODDSAPI_KEY",
+    "kalshi_api_key": "YOUR_KALSHI_API_KEY",
+    "kalshi_api_secret": "YOUR_KALSHI_API_SECRET",
+    "llm_api_key": "YOUR_LLM_API_KEY",
+    "llm_provider": "groq",
+    "llm_model": "llama3-8b-8192"
+  },
+
+  "email": {
+    "sender": "your_gmail@gmail.com",
+    "app_password": "YOUR_GMAIL_APP_PASSWORD",
+    "recipient": "your_alert_email@gmail.com",
+    "dashboard_url": "https://your-app.streamlit.app"
+  }
+}

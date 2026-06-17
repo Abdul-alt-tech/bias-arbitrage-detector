@@ -1,0 +1,98 @@
+name: Bias Arbitrage Scanner
+
+on:
+  schedule:
+    # Runs every 3 hours
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
+    # Also allows manual trigger from GitHub Actions UI
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write config from secrets
+        run: |
+          cat > config.json << 'EOF'
+          {
+            "platforms": ["kalshi"],
+            "sport": "UFC",
+            "lookahead_days": 7,
+            "risk_mode": "conservative",
+            "bankroll": {
+              "mode": "paper",
+              "value": 200,
+              "currency": "ZMW"
+            },
+            "kelly_fraction": {
+              "conservative": 0.25,
+              "aggressive": 0.75
+            },
+            "edge_threshold_pct": {
+              "conservative": 5.0,
+              "aggressive": 3.0
+            },
+            "confidence_cutoff": {
+              "conservative": 0.7,
+              "aggressive": 0.5
+            },
+            "alert_sort": {
+              "conservative": "calibrated_confidence",
+              "aggressive": "calibrated_confidence_x_payout_multiple"
+            },
+            "api_keys": {
+              "the_odds_api": "${{ secrets.THE_ODDS_API_KEY }}",
+              "kalshi_api_key": "${{ secrets.KALSHI_API_KEY }}",
+              "kalshi_api_secret": "${{ secrets.KALSHI_API_SECRET }}",
+              "llm_api_key": "${{ secrets.LLM_API_KEY }}",
+              "llm_provider": "groq",
+              "llm_model": "llama3-8b-8192"
+            },
+            "email": {
+              "sender": "${{ secrets.EMAIL_SENDER }}",
+              "app_password": "${{ secrets.EMAIL_APP_PASSWORD }}",
+              "recipient": "${{ secrets.EMAIL_RECIPIENT }}",
+              "dashboard_url": "${{ secrets.DASHBOARD_URL }}"
+            }
+          }
+          EOF
+
+      - name: Run data collector
+        run: python data_collector.py
+
+      - name: Run scoring
+        run: python scoring.py
+
+      - name: Run LLM reasoner
+        run: python llm_reasoner.py
+
+      - name: Run alerter
+        run: python alerter.py
+
+      - name: Run resolver
+        run: python resolver.py
+
+      - name: Run calibrator
+        run: python calibrator.py
+
+      - name: Commit updated snapshots and calibration
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Actions"
+          git add snapshots.jsonl calibration.json || true
+          git diff --staged --quiet || git commit -m "scan: $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
