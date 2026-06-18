@@ -62,6 +62,12 @@ class PolymarketAdapter(ExchangeAdapter):
             }
             resp = self.session.get(url, params=params, timeout=10)
             resp.raise_for_status()
+            
+            # Validate response is not empty before parsing
+            if not resp.content:
+                print(f"[PolymarketAdapter] Empty response from Gamma API")
+                return []
+            
             data = resp.json()
 
             markets = []
@@ -107,6 +113,18 @@ class PolymarketAdapter(ExchangeAdapter):
             params = {"token_id": token_id}
             resp = self.session.get(url, params=params, timeout=10)
             resp.raise_for_status()
+            
+            # Validate response is not empty before parsing
+            if not resp.content:
+                print(f"[PolymarketAdapter] Empty response from CLOB price API for {market_id}")
+                return {
+                    "market_prob": None,
+                    "prob_24h_ago": None,
+                    "price_change_24h": None,
+                    "volume_24h": None,
+                    "price_history_source": "error"
+                }
+            
             data = resp.json()
 
             market_prob = float(data.get("price", 0.5))
@@ -150,12 +168,14 @@ class PolymarketAdapter(ExchangeAdapter):
             resp = self.session.get(url, params=params, timeout=10)
 
             if resp.status_code == 200:
-                history = resp.json().get("history", [])
-                if history:
-                    oldest = history[0]
-                    price = oldest.get("p", None)
-                    if price is not None:
-                        return (round(float(price), 4), "platform_api")
+                # Validate response is not empty before parsing
+                if resp.content:
+                    history = resp.json().get("history", [])
+                    if history:
+                        oldest = history[0]
+                        price = oldest.get("p", None)
+                        if price is not None:
+                            return (round(float(price), 4), "platform_api")
 
         except Exception:
             pass
