@@ -39,11 +39,23 @@ def load_config() -> dict:
 
 
 def load_or_init_calibration() -> dict:
-    """Load calibration.json or create a fresh one."""
+    """Load calibration.json or create a fresh one.
+    
+    Handles empty files gracefully by treating them as missing
+    and initializing fresh calibration data.
+    """
     cal_path = "calibration.json"
     if os.path.exists(cal_path):
-        with open(cal_path) as f:
-            return json.load(f)
+        try:
+            with open(cal_path) as f:
+                content = f.read().strip()
+                # Handle empty or whitespace-only files
+                if content:
+                    return json.loads(content)
+                else:
+                    print(f"[Calibrator] {cal_path} is empty, initializing fresh calibration.")
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"[Calibrator] Failed to parse {cal_path}: {e}. Initializing fresh calibration.")
 
     return {
         "min_sample_size": MIN_SAMPLE_SIZE,
@@ -104,9 +116,14 @@ def run():
     records = []
     with open("snapshots.jsonl") as f:
         for line in f:
+            line = line.strip()
+            # Skip empty lines
+            if not line:
+                continue
             try:
-                records.append(json.loads(line.strip()))
-            except json.JSONDecodeError:
+                records.append(json.loads(line))
+            except json.JSONDecodeError as e:
+                print(f"[Calibrator] Skipping malformed JSON line: {e}")
                 continue
 
     cal = load_or_init_calibration()
