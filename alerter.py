@@ -211,12 +211,24 @@ def run():
         return
 
     records = []
-    with open("snapshots.jsonl") as f:
-        for line in f:
-            try:
-                records.append(json.loads(line.strip()))
-            except json.JSONDecodeError:
-                continue
+    try:
+        with open("snapshots.jsonl") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    print(f"[Alerter] Warning: Skipping malformed JSON at line {line_num}: {e}")
+                    continue
+    except Exception as e:
+        print(f"[Alerter] Error reading snapshots.jsonl: {e}")
+        return
+
+    if not records:
+        print("[Alerter] No valid records found in snapshots.jsonl")
+        return
 
     alerted = 0
     checked = 0
@@ -239,9 +251,13 @@ def run():
         alerted += 1
 
     # Rewrite snapshots.jsonl
-    with open("snapshots.jsonl", "w") as f:
-        for r in records:
-            f.write(json.dumps(r) + "\n")
+    try:
+        with open("snapshots.jsonl", "w") as f:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+    except Exception as e:
+        print(f"[Alerter] Error writing snapshots.jsonl: {e}")
+        return
 
     print(f"\n[Alerter] Done. Checked: {checked} | Alerted: {alerted}")
 

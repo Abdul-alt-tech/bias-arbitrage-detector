@@ -52,8 +52,8 @@ def compute_kelly_bet(edge_percent: float, payout_multiple: float,
     Kelly criterion bet size.
     f = (bp - q) / b
     where b = payout_multiple - 1 (net odds),
-          p = implied win probability,
-          q = 1 - p
+           p = implied win probability,
+           q = 1 - p
 
     Returns suggested bet as a fraction of bankroll,
     capped at kelly_fraction.
@@ -123,12 +123,24 @@ def run():
         return
 
     records = []
-    with open("snapshots.jsonl") as f:
-        for line in f:
-            try:
-                records.append(json.loads(line.strip()))
-            except json.JSONDecodeError:
-                continue
+    try:
+        with open("snapshots.jsonl") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    print(f"[Scoring] Warning: Skipping malformed JSON at line {line_num}: {e}")
+                    continue
+    except Exception as e:
+        print(f"[Scoring] Error reading snapshots.jsonl: {e}")
+        return
+
+    if not records:
+        print("[Scoring] No valid records found in snapshots.jsonl")
+        return
 
     scored = 0
     skipped = 0
@@ -157,9 +169,13 @@ def run():
                       f"bet: {record['alert']['suggested_bet_value_zmw']} ZMW")
 
     # Rewrite snapshots.jsonl with updated records
-    with open("snapshots.jsonl", "w") as f:
-        for r in updated_records:
-            f.write(json.dumps(r) + "\n")
+    try:
+        with open("snapshots.jsonl", "w") as f:
+            for r in updated_records:
+                f.write(json.dumps(r) + "\n")
+    except Exception as e:
+        print(f"[Scoring] Error writing snapshots.jsonl: {e}")
+        return
 
     print(f"\n[Scoring] Done. Scored: {scored} | Skipped: {skipped} | "
           f"LLM candidates (edge > {edge_threshold_pct}%): {llm_candidates}")

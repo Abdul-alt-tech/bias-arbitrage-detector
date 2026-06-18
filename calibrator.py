@@ -39,24 +39,25 @@ def load_config() -> dict:
 
 
 def load_or_init_calibration() -> dict:
-    """Load calibration.json or create a fresh one.
-    
-    Handles empty files gracefully by treating them as missing
-    and initializing fresh calibration data.
-    """
+    """Load calibration.json or create a fresh one."""
     cal_path = "calibration.json"
     if os.path.exists(cal_path):
         try:
             with open(cal_path) as f:
                 content = f.read().strip()
-                # Handle empty or whitespace-only files
-                if content:
-                    return json.loads(content)
-                else:
-                    print(f"[Calibrator] {cal_path} is empty, initializing fresh calibration.")
-        except (json.JSONDecodeError, ValueError) as e:
-            print(f"[Calibrator] Failed to parse {cal_path}: {e}. Initializing fresh calibration.")
+                if not content:
+                    # File exists but is empty, create fresh one
+                    return _create_fresh_calibration()
+                return json.loads(content)
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"[Calibrator] Warning: Could not load calibration.json ({e}), starting fresh")
+            return _create_fresh_calibration()
 
+    return _create_fresh_calibration()
+
+
+def _create_fresh_calibration() -> dict:
+    """Create a fresh calibration structure."""
     return {
         "min_sample_size": MIN_SAMPLE_SIZE,
         "bias_type_multipliers": {
@@ -114,17 +115,24 @@ def run():
         return
 
     records = []
-    with open("snapshots.jsonl") as f:
-        for line in f:
-            line = line.strip()
-            # Skip empty lines
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError as e:
-                print(f"[Calibrator] Skipping malformed JSON line: {e}")
-                continue
+    try:
+        with open("snapshots.jsonl") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    print(f"[Calibrator] Warning: Skipping malformed JSON at line {line_num}: {e}")
+                    continue
+    except Exception as e:
+        print(f"[Calibrator] Error reading snapshots.jsonl: {e}")
+        return
+
+    if not records:
+        print("[Calibrator] No valid records found in snapshots.jsonl")
+        return
 
     cal = load_or_init_calibration()
 
@@ -205,8 +213,12 @@ def run():
     cal["confidence_buckets"] = bucket_stats
     cal["last_updated"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    with open("calibration.json", "w") as f:
-        json.dump(cal, f, indent=2)
+    try:
+        with open("calibration.json", "w") as f:
+            json.dump(cal, f, indent=2)
+    except Exception as e:
+        print(f"[Calibrator] Error writing calibration.json: {e}")
+        return
 
     print(f"\n[Calibrator] Done.")
     print(f"  Total scanned: {total_scanned} | Flagged: {len(flagged)} | "

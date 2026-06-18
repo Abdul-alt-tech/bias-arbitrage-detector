@@ -46,6 +46,9 @@ def fetch_fight_result(fighter_a: str, fighter_b: str) -> dict:
         if resp.status_code != 200:
             return {"winner": None, "method": None, "confirmed": False}
 
+        if not resp.content or not resp.text.strip():
+            return {"winner": None, "method": None, "confirmed": False}
+
         data = resp.json()
         events = data.get("events", [])
 
@@ -82,7 +85,7 @@ def fetch_fight_result(fighter_a: str, fighter_b: str) -> dict:
 
         return {"winner": None, "method": None, "confirmed": False}
 
-    except Exception as e:
+    except (requests.RequestException, json.JSONDecodeError) as e:
         print(f"  [Resolver] ESPN error: {e}")
         return {"winner": None, "method": None, "confirmed": False}
 
@@ -145,12 +148,24 @@ def run():
         return
 
     records = []
-    with open("snapshots.jsonl") as f:
-        for line in f:
-            try:
-                records.append(json.loads(line.strip()))
-            except json.JSONDecodeError:
-                continue
+    try:
+        with open("snapshots.jsonl") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    print(f"[Resolver] Warning: Skipping malformed JSON at line {line_num}: {e}")
+                    continue
+    except Exception as e:
+        print(f"[Resolver] Error reading snapshots.jsonl: {e}")
+        return
+
+    if not records:
+        print("[Resolver] No valid records found in snapshots.jsonl")
+        return
 
     resolved_count = 0
     checked = 0
@@ -206,9 +221,13 @@ def run():
         print(f"    Winner: {winner} ({method}) | P&L: {'+' if pnl >= 0 else ''}{pnl} ZMW")
 
     # Rewrite snapshots.jsonl
-    with open("snapshots.jsonl", "w") as f:
-        for r in records:
-            f.write(json.dumps(r) + "\n")
+    try:
+        with open("snapshots.jsonl", "w") as f:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+    except Exception as e:
+        print(f"[Resolver] Error writing snapshots.jsonl: {e}")
+        return
 
     print(f"\n[Resolver] Done. Checked: {checked} | Resolved: {resolved_count}")
 

@@ -102,11 +102,15 @@ def call_groq(prompt_input: dict, market_prob: float, reference_prob: float,
     resp.raise_for_status()
     
     # Validate response is not empty before parsing
-    if not resp.content:
+    if not resp.content or not resp.text.strip():
         raise ValueError("Empty response from Groq API")
     
-    content = resp.json()["choices"][0]["message"]["content"].strip()
-    return parse_llm_response(content)
+    try:
+        content = resp.json()["choices"][0]["message"]["content"].strip()
+        return parse_llm_response(content)
+    except (json.JSONDecodeError, KeyError, IndexError) as e:
+        print(f"  [LLM] Error parsing Groq response: {e}")
+        raise ValueError(f"Invalid Groq response format: {e}")
 
 
 def call_anthropic(prompt_input: dict, market_prob: float, reference_prob: float,
@@ -138,11 +142,15 @@ def call_anthropic(prompt_input: dict, market_prob: float, reference_prob: float
     resp.raise_for_status()
     
     # Validate response is not empty before parsing
-    if not resp.content:
+    if not resp.content or not resp.text.strip():
         raise ValueError("Empty response from Anthropic API")
     
-    content = resp.json()["content"][0]["text"].strip()
-    return parse_llm_response(content)
+    try:
+        content = resp.json()["content"][0]["text"].strip()
+        return parse_llm_response(content)
+    except (json.JSONDecodeError, KeyError, IndexError) as e:
+        print(f"  [LLM] Error parsing Anthropic response: {e}")
+        raise ValueError(f"Invalid Anthropic response format: {e}")
 
 
 def parse_llm_response(raw: str) -> dict:
@@ -151,6 +159,14 @@ def parse_llm_response(raw: str) -> dict:
     Strips any accidental markdown fences.
     Returns a safe default if parsing fails.
     """
+    if not raw or not raw.strip():
+        print(f"  [LLM] Empty LLM response received")
+        return {
+            "bias_type": "none",
+            "raw_confidence": 0.0,
+            "reason": "empty_response"
+        }
+    
     clean = raw.replace("```json", "").replace("```", "").strip()
 
     try:
@@ -160,8 +176,8 @@ def parse_llm_response(raw: str) -> dict:
             "raw_confidence": float(parsed.get("confidence", 0.0)),
             "reason": str(parsed.get("reason", ""))[:250]
         }
-    except (json.JSONDecodeError, ValueError, TypeError):
-        print(f"  [LLM] Failed to parse response: {raw[:100]}")
+    except (json.JSONDecodeError, ValueError, TypeError) as e:
+        print(f"  [LLM] Failed to parse response: {raw[:100]} | Error: {e}")
         return {
             "bias_type": "none",
             "raw_confidence": 0.0,
@@ -186,7 +202,10 @@ def apply_calibration(bias_type: str, raw_confidence: float) -> float:
 
     try:
         with open(cal_path) as f:
-            cal = json.load(f)
+            content = f.read().strip()
+            if not content:
+                return raw_confidence
+            cal = json.loads(content)
 
         min_samples = cal.get("min_sample_size", 20)
         bucket = cal.get("bias_type_multipliers", {}).get(bias_type, {})
@@ -198,7 +217,8 @@ def apply_calibration(bias_type: str, raw_confidence: float) -> float:
 
         return round(min(1.0, raw_confidence * multiplier), 4)
 
-    except (json.JSONDecodeError, KeyError):
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        print(f"  [LLM] Error reading calibration.json: {e}")
         return raw_confidence
 
 
@@ -221,12 +241,24 @@ def run():
         return
 
     records = []
-    with open("snapshots.jsonl") as f:
-        for line in f:
-            try:
-                records.append(json.loads(line.strip()))
-            except json.JSONDecodeError:
-                continue
+    try:
+        with open("snapshots.jsonl") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    print(f"[LLM] Warning: Skipping malformed JSON at line {line_num}: {e}")
+                    continue
+    except Exception as e:
+        print(f"[LLM] Error reading snapshots.jsonl: {e}")
+        return
+
+    if not records:
+        print("[LLM] No valid records found in snapshots.jsonl")
+        return
 
     called = 0
     skipped = 0
@@ -281,9 +313,13 @@ def run():
             continue
 
     # Rewrite snapshots.jsonl
-    with open("snapshots.jsonl", "w") as f:
-        for r in records:
-            f.write(json.dumps(r) + "\n")
+    try:
+        with open("snapshots.jsonl", "w") as f:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+    except Exception as e:
+        print(f"[LLM] Error writing snapshots.jsonl: {e}")
+        return
 
     print(f"\n[LLM] Done. Called: {called} | Below threshold (skipped): {skipped}")
 
