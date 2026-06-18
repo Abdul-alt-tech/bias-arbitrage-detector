@@ -70,22 +70,21 @@ class PolymarketAdapter(ExchangeAdapter):
             events = data if isinstance(data, list) else data.get("events", [])
             for event in events:
                 for m in event.get("markets", []):
-                try:
-                    # Only moneyline markets (the main winner prediction)
-                    if m.get("sportsMarketType") != "moneyline":
-                  
+                    try:
+                        # Only moneyline markets (the main winner prediction)
+                        if m.get("sportsMarketType") != "moneyline":
+                            continue
+                        end_date_str = m.get("endDate", "")
+                        if not end_date_str:
+                            continue
+                        end_date = datetime.fromisoformat(
+                            end_date_str.replace("Z", "+00:00")
+                        )
+                        
+                        if end_date > datetime.now(timezone.utc) and end_date <= cutoff:
+                            markets.append(self._normalize_market(m, event))
+                    except (ValueError, KeyError):
                         continue
-                    end_date_str = m.get("endDate", "")
-                    if not end_date_str:
-                        continue
-                    end_date = datetime.fromisoformat(
-                        end_date_str.replace("Z", "+00:00")
-                    )
-                    
-                    if end_date > datetime.now(timezone.utc) and end_date <= cutoff:
-                        markets.append(self._normalize_market(m, event))
-                except (ValueError, KeyError):
-                    continue
 
             return markets
 
@@ -204,43 +203,44 @@ class PolymarketAdapter(ExchangeAdapter):
         return (None, "not_found")
 
     def _normalize_market(self, raw: dict, event: dict = None) -> dict:
-    """
-    Normalize a raw Polymarket market dict into the standard
-    format expected by data_collector.py.
-    Uses the parent event for context (title, fighter names).
-    """
-    condition_id = raw.get("conditionId", "")
-    slug = raw.get("slug", "")
-    question = raw.get("question", "")
-    event_title = event.get("title", "UFC Event") if event else "UFC Event"
+        """
+        Normalize a raw Polymarket market dict into the standard
+        format expected by data_collector.py.
+        Uses the parent event for context (title, fighter names).
+        """
+        condition_id = raw.get("conditionId", "")
+        slug = raw.get("slug", "")
+        question = raw.get("question", "")
+        event_title = event.get("title", "UFC Event") if event else "UFC Event"
 
-    # Parse fighter names from the question
-    # e.g. "UFC Fight Night: Andre Fili vs. Vinicius Oliveira (...)"
-    fighter_a, fighter_b = self._parse_fighters(question)
+        # Parse fighter names from the question
+        # e.g. "UFC Fight Night: Andre Fili vs. Vinicius Oliveira (...)"
+        fighter_a, fighter_b = self._parse_fighters(question)
 
-    # Build market URL from event slug
-    event_slug = event.get("slug", slug) if event else slug
+        # Build market URL from event slug
+        event_slug = event.get("slug", slug) if event else slug
 
-    # Get token ID for price fetching (first token = YES/fighter_a)
-    clob_tokens = raw.get("clobTokenIds", "[]")
-    try:
-        import json as _json
-        token_list = _json.loads(clob_tokens)
-        token_id = token_list[0] if token_list else condition_id
-    except Exception:
-        token_id = condition_id
+        # Get token ID for price fetching (first token = YES/fighter_a)
+        clob_tokens = raw.get("clobTokenIds", "[]")
+        try:
+            import json as _json
+            token_list = _json.loads(clob_tokens)
+            token_id = token_list[0] if token_list else condition_id
+        except Exception:
+            token_id = condition_id
 
-    return {
-        "market_id": f"poly_{condition_id}",
-        "market_url": f"https://polymarket.com/event/{event_slug}",
-        "question": question,
-        "event_name": event_title,
-        "start_time": raw.get("endDate", ""),
-        "fighter_a": fighter_a,
-        "fighter_b": fighter_b,
-        "_token_id": token_id,
-        "_raw": raw
-    }
+        return {
+            "market_id": f"poly_{condition_id}",
+            "market_url": f"https://polymarket.com/event/{event_slug}",
+            "question": question,
+            "event_name": event_title,
+            "start_time": raw.get("endDate", ""),
+            "fighter_a": fighter_a,
+            "fighter_b": fighter_b,
+            "_token_id": token_id,
+            "_raw": raw
+        }
+
     def _parse_fighters(self, question: str) -> tuple:
         """
         Parse fighter names from a Polymarket question string.
