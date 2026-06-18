@@ -29,7 +29,7 @@ def load_config() -> dict:
 
 SYSTEM_PROMPT = """You are a betting bias detector for UFC fight markets. Be skeptical. Default answer = no edge.
 
-Your job is to detect whether a gap between market_prob (prediction market crowd price) and reference_prob (sportsbook baseline) is explained by a known cognitive bias, or by genuine new information.
+Your job is to detect whether a gap between market_prob (prediction market crowd price) and reference_prob (sportsbook baseline) is explained by a known cognitive bias, or by genuine new informati[...]
 
 Rules:
 - If not confident, set confidence = 0
@@ -100,6 +100,11 @@ def call_groq(prompt_input: dict, market_prob: float, reference_prob: float,
 
     resp = requests.post(url, headers=headers, json=payload, timeout=30)
     resp.raise_for_status()
+    
+    # Validate response is not empty before parsing
+    if not resp.content:
+        raise ValueError("Empty response from Groq API")
+    
     content = resp.json()["choices"][0]["message"]["content"].strip()
     return parse_llm_response(content)
 
@@ -131,6 +136,11 @@ def call_anthropic(prompt_input: dict, market_prob: float, reference_prob: float
 
     resp = requests.post(url, headers=headers, json=payload, timeout=30)
     resp.raise_for_status()
+    
+    # Validate response is not empty before parsing
+    if not resp.content:
+        raise ValueError("Empty response from Anthropic API")
+    
     content = resp.json()["content"][0]["text"].strip()
     return parse_llm_response(content)
 
