@@ -53,9 +53,9 @@ class PolymarketAdapter(ExchangeAdapter):
         try:
             # Gamma API supports tag-based filtering
             # Tag for MMA/UFC — verify exact tag in Phase 0
-            url = f"{GAMMA_API}/markets"
+            url = f"{GAMMA_API}/events"
             params = {
-                "tag": "mma",
+                "seriesSlug": "ufc",
                 "active": "true",
                 "closed": "false",
                 "limit": 100
