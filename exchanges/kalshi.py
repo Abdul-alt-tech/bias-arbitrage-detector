@@ -60,6 +60,12 @@ class KalshiAdapter(ExchangeAdapter):
             }
             resp = self.session.get(url, params=params, timeout=10)
             resp.raise_for_status()
+            
+            # Validate response is not empty before parsing
+            if not resp.content:
+                print(f"[KalshiAdapter] Empty response from Kalshi markets API")
+                return []
+            
             data = resp.json()
 
             markets = []
@@ -93,6 +99,18 @@ class KalshiAdapter(ExchangeAdapter):
             url = f"{KALSHI_BASE_URL}/markets/{ticker}"
             resp = self.session.get(url, timeout=10)
             resp.raise_for_status()
+            
+            # Validate response is not empty before parsing
+            if not resp.content:
+                print(f"[KalshiAdapter] Empty response from Kalshi price API for {market_id}")
+                return {
+                    "market_prob": None,
+                    "prob_24h_ago": None,
+                    "price_change_24h": None,
+                    "volume_24h": None,
+                    "price_history_source": "error"
+                }
+            
             data = resp.json().get("market", {})
 
             # Kalshi YES price is in cents (1-99)
@@ -139,11 +157,13 @@ class KalshiAdapter(ExchangeAdapter):
             resp = self.session.get(url, params=params, timeout=10)
 
             if resp.status_code == 200:
-                candles = resp.json().get("candlesticks", [])
-                if candles:
-                    open_price = candles[0].get("yes_ask", {}).get("open", None)
-                    if open_price:
-                        return (round(float(open_price) / 100.0, 4), "platform_api")
+                # Validate response is not empty before parsing
+                if resp.content:
+                    candles = resp.json().get("candlesticks", [])
+                    if candles:
+                        open_price = candles[0].get("yes_ask", {}).get("open", None)
+                        if open_price:
+                            return (round(float(open_price) / 100.0, 4), "platform_api")
 
         except Exception:
             pass
