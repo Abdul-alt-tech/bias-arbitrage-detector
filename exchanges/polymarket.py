@@ -99,7 +99,9 @@ class PolymarketAdapter(ExchangeAdapter):
         market_id format: "poly_0xabc123..."
         Prices are already 0-1 (no normalization needed).
         """
-        token_id = market_id.replace("poly_", "")
+        # Accept either "poly_{conditionId}" or a raw CLOB token ID
+        raw_id = market_id.replace("poly_", "")
+        token_id = raw_id  # CLOB token IDs are long integers; conditionIds start with 0x
 
         try:
             url = f"{CLOB_API}/last-trade-price"
