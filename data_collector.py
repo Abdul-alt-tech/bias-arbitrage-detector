@@ -340,7 +340,9 @@ def run():
             print(f"  [fetch] {market_id} — {market.get('question', '')[:60]}")
 
             # Price snapshot
-            price_data = adapter.get_price_snapshot(market_id)
+            # For Polymarket, use the CLOB token ID for price fetching
+            lookup_id = market.get("_token_id", market_id) if platform == "polymarket" else market_id
+            price_data = adapter.get_price_snapshot(lookup_id if platform == "polymarket" else market_id)
             if price_data.get("market_prob") is None:
                 print(f"  [skip] Could not fetch price for {market_id}")
                 continue
