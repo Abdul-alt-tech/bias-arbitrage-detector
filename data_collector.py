@@ -69,9 +69,20 @@ def fetch_reference_prob(fighter_a: str, fighter_b: str, api_key: str) -> Option
             fb = fighter_b.lower()
 
             # Match on last name partial match (fighter names vary across sources)
-            if (fa.split()[-1] in home or fa.split()[-1] in away) and \
-               (fb.split()[-1] in home or fb.split()[-1] in away):
-
+            # Fighter A and B should be on opposite sides of the matchup
+            fa_last = fa.split()[-1] if fa.split() else ""
+            fb_last = fb.split()[-1] if fb.split() else ""
+            
+            if not fa_last or not fb_last:
+                continue
+                
+            fa_in_home = fa_last in home
+            fa_in_away = fa_last in away
+            fb_in_home = fb_last in home
+            fb_in_away = fb_last in away
+            
+            # Match if fighters are on opposite sides
+            if (fa_in_home and fb_in_away) or (fa_in_away and fb_in_home):
                 # Average implied probability across all bookmakers
                 probs_a = []
                 for bookmaker in event.get("bookmakers", []):
@@ -79,9 +90,10 @@ def fetch_reference_prob(fighter_a: str, fighter_b: str, api_key: str) -> Option
                         if market["key"] == "h2h":
                             for outcome in market["outcomes"]:
                                 name = outcome["name"].lower()
-                                if fa.split()[-1] in name:
+                                if fa_last in name:
                                     decimal_odds = outcome["price"]
-                                    probs_a.append(1.0 / decimal_odds)
+                                    if decimal_odds and decimal_odds > 0:
+                                        probs_a.append(1.0 / decimal_odds)
 
                 if probs_a:
                     raw_prob = sum(probs_a) / len(probs_a)
@@ -153,14 +165,18 @@ def fetch_fighter_stats(fighter_name: str) -> dict:
         last_fight_date = None
 
         for event in sorted(events, key=lambda x: x.get("date", ""), reverse=True)[:3]:
-            result = event.get("competitions", [{}])[0].get("competitors", [{}])
+            competitions = event.get("competitions", [])
+            if not competitions:
+                continue
+                
+            result = competitions[0].get("competitors", [])
             winner = None
             method = "DEC"
             for comp in result:
                 if str(comp.get("id")) == str(athlete_id):
                     winner = comp.get("winner", False)
                     # Method parsing varies — default to DEC if unclear
-                    status = event.get("competitions", [{}])[0].get("status", {})
+                    status = competitions[0].get("status", {})
                     detail = status.get("type", {}).get("detail", "").upper()
                     if "KO" in detail or "TKO" in detail:
                         method = "KO"
@@ -324,6 +340,7 @@ def run():
 
     for adapter in adapters:
         platform = adapter.get_platform_name()
+        platform_lower = platform.lower()
         print(f"\n[Collector] Scanning {platform.upper()} for {sport} markets...")
 
         markets = adapter.list_upcoming_markets(sport, lookahead)
@@ -341,9 +358,9 @@ def run():
 
             # Price snapshot
             # For Polymarket, use the CLOB token ID for price fetching
-            lookup_id = market.get("_token_id", market_id) if platform == "polymarket" else market_id
+            lookup_id = market.get("_token_id", market_id) if platform_lower == "polymarket" else market_id
             price_data = adapter.get_price_snapshot(lookup_id)
-            if price_data.get("market_prob") is None:
+            if not price_data or price_data.get("market_prob") is None:
                 print(f"  [skip] Could not fetch price for {market_id}")
                 continue
 
