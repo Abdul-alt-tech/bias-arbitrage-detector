@@ -113,6 +113,16 @@ class PolymarketAdapter(ExchangeAdapter):
             print(f"[PolymarketAdapter] Error fetching events: {e}")
             return []
 
+        print(f"[PolymarketAdapter] Raw events returned: {len(events)}")
+        if events:
+            sample = events[0]
+            sample_markets = sample.get("markets", [])
+            print(f"[PolymarketAdapter] DEBUG first event title: {sample.get('title')}")
+            print(f"[PolymarketAdapter] DEBUG first event has {len(sample_markets)} nested markets")
+            if sample_markets:
+                print(f"[PolymarketAdapter] DEBUG first market sportsMarketType: {sample_markets[0].get('sportsMarketType')}")
+                print(f"[PolymarketAdapter] DEBUG first market closed: {sample_markets[0].get('closed')}")
+
     # ------------------------------------------------------------------
     # Price snapshot
     # ------------------------------------------------------------------
