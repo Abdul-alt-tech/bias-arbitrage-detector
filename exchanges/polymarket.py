@@ -47,7 +47,7 @@ class PolymarketAdapter(ExchangeAdapter):
         try:
             url = f"{GAMMA_API}/events"
             params = {
-                "seriesSlug": "ufc",
+                "series_id": "38",
                 "active":     "true",
                 "closed":     "false",
                 "limit":      100
