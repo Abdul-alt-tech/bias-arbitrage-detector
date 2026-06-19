@@ -1,0 +1,50 @@
+{
+  "min_sample_size": 20,
+  "bias_type_multipliers": {
+    "recency": {
+      "multiplier": 1.0,
+      "sample_size": 0,
+      "actual_winrate": null,
+      "implied_winrate": null
+    },
+    "star": {
+      "multiplier": 1.0,
+      "sample_size": 0,
+      "actual_winrate": null,
+      "implied_winrate": null
+    },
+    "durability_age": {
+      "multiplier": 1.0,
+      "sample_size": 0,
+      "actual_winrate": null,
+      "implied_winrate": null
+    },
+    "layoff": {
+      "multiplier": 1.0,
+      "sample_size": 0,
+      "actual_winrate": null,
+      "implied_winrate": null
+    },
+    "style_matchup": {
+      "multiplier": 1.0,
+      "sample_size": 0,
+      "actual_winrate": null,
+      "implied_winrate": null
+    },
+    "overreaction": {
+      "multiplier": 1.0,
+      "sample_size": 0,
+      "actual_winrate": null,
+      "implied_winrate": null
+    }
+  },
+  "global_stats": {
+    "total_scanned": 0,
+    "total_flagged": 0,
+    "total_resolved": 0,
+    "overall_winrate": null,
+    "total_pnl_zmw": 0
+  },
+  "confidence_buckets": {},
+  "last_updated": "2026-06-19T00:09:06.335336Z"
+}
