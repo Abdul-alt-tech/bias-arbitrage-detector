@@ -41,7 +41,7 @@ jobs:
               "the_odds_api": "${{ secrets.THE_ODDS_API_KEY }}",
               "llm_api_key": "${{ secrets.LLM_API_KEY }}",
               "llm_provider": "groq",
-              "llm_model": "llama3-8b-8192"
+              "llm_model": "llama-3.1-8b-instant"
             },
             "email": {
               "sender": "${{ secrets.EMAIL_SENDER }}",
