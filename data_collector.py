@@ -42,19 +42,19 @@ def fetch_reference_prob(fighter_a: str, fighter_b: str, api_key: str) -> Option
     """
     Fetch MMA moneyline odds from TheOddsAPI and convert to
     implied probability for fighter_a winning.
-
     Returns float (0-1) or None if market not found.
-
-    ⚠️ Phase 0: verify exact sport key for MMA in TheOddsAPI.
-    Common values: "mma_mixed_martial_arts" or "ufc"
     """
+    if not api_key or api_key == "YOUR_THEODDSAPI_KEY":
+        print(f"  [TheOddsAPI] No API key configured — skipping reference prob")
+        return None
+
     sport_key = "mma_mixed_martial_arts"
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
     params = {
-        "apiKey": api_key,
-        "regions": "us",
-        "markets": "h2h",
-        "oddsFormat": "decimal"
+        "apiKey":      api_key,
+        "regions":     "us",
+        "markets":     "h2h",
+        "oddsFormat":  "decimal"
     }
 
     try:
@@ -62,28 +62,19 @@ def fetch_reference_prob(fighter_a: str, fighter_b: str, api_key: str) -> Option
         resp.raise_for_status()
         events = resp.json()
 
+        fa_last = fighter_a.split()[-1].lower() if fighter_a else ""
+        fb_last = fighter_b.split()[-1].lower() if fighter_b else ""
+
+        if not fa_last or not fb_last:
+            return None
+
         for event in events:
             home = event.get("home_team", "").lower()
             away = event.get("away_team", "").lower()
-            fa = fighter_a.lower()
-            fb = fighter_b.lower()
 
-            # Match on last name partial match (fighter names vary across sources)
-            # Fighter A and B should be on opposite sides of the matchup
-            fa_last = fa.split()[-1] if fa.split() else ""
-            fb_last = fb.split()[-1] if fb.split() else ""
-            
-            if not fa_last or not fb_last:
-                continue
-                
-            fa_in_home = fa_last in home
-            fa_in_away = fa_last in away
-            fb_in_home = fb_last in home
-            fb_in_away = fb_last in away
-            
-            # Match if fighters are on opposite sides
-            if (fa_in_home and fb_in_away) or (fa_in_away and fb_in_home):
-                # Average implied probability across all bookmakers
+            if (fa_last in home or fa_last in away) and \
+               (fb_last in home or fb_last in away):
+
                 probs_a = []
                 for bookmaker in event.get("bookmakers", []):
                     for market in bookmaker.get("markets", []):
@@ -92,55 +83,45 @@ def fetch_reference_prob(fighter_a: str, fighter_b: str, api_key: str) -> Option
                                 name = outcome["name"].lower()
                                 if fa_last in name:
                                     decimal_odds = outcome["price"]
-                                    if decimal_odds and decimal_odds > 0:
-                                        probs_a.append(1.0 / decimal_odds)
+                                    probs_a.append(1.0 / decimal_odds)
 
                 if probs_a:
                     raw_prob = sum(probs_a) / len(probs_a)
-                    # Remove rough vig (normalize to ~true probability)
                     return round(raw_prob, 4)
 
-        print(f"[TheOddsAPI] No match found for {fighter_a} vs {fighter_b}")
+        print(f"  [TheOddsAPI] No match found for {fighter_a} vs {fighter_b}")
         return None
 
     except requests.RequestException as e:
-        print(f"[TheOddsAPI] Error: {e}")
+        print(f"  [TheOddsAPI] Error: {e}")
         return None
 
 
 # ---------------------------------------------------------------------------
-# Fighter bias_inputs from UFCStats / ESPN MMA
+# Fighter bias_inputs from ESPN MMA
 # ---------------------------------------------------------------------------
 
 def fetch_fighter_stats(fighter_name: str) -> dict:
     """
-    Fetch fighter's last 3 results and other bias_inputs.
-
-    Current implementation: ESPN MMA athlete search.
-    ⚠️ Phase 0: verify ESPN MMA endpoint availability and
-    response structure. May need to fall back to UFCStats scraping
-    or manual curation for some fighters.
-
+    Fetch fighter's last 3 results and other bias_inputs from ESPN MMA.
     Returns a bias_inputs fighter dict.
     """
-    # ESPN athlete search
-    search_url = "https://site.api.espn.com/apis/common/v3/search"
-    params = {
-        "query": fighter_name,
-        "sport": "mma",
-        "limit": 1
+    default = {
+        "name":               fighter_name,
+        "last_3_results":     [],
+        "days_since_last_fight": None,
+        "weight_class":       None,
+        "news_flags":         ["stats_unavailable"]
     }
 
-    default = {
-        "name": fighter_name,
-        "last_3_results": [],
-        "days_since_last_fight": None,
-        "weight_class": None,
-        "news_flags": ["stats_unavailable"]
-    }
+    if not fighter_name or fighter_name in ("Fighter A", "Fighter B"):
+        return default
 
     try:
-        resp = requests.get(search_url, params=params, timeout=10)
+        search_url = "https://site.api.espn.com/apis/common/v3/search"
+        params     = {"query": fighter_name, "sport": "mma", "limit": 1}
+        resp       = requests.get(search_url, params=params, timeout=10)
+
         if resp.status_code != 200:
             return default
 
@@ -152,31 +133,25 @@ def fetch_fighter_stats(fighter_name: str) -> dict:
         if not athlete_id:
             return default
 
-        # Fetch athlete event log
-        log_url = f"https://site.api.espn.com/apis/site/v2/sports/mma/ufc/athletes/{athlete_id}/eventlog"
+        log_url  = f"https://site.api.espn.com/apis/site/v2/sports/mma/ufc/athletes/{athlete_id}/eventlog"
         log_resp = requests.get(log_url, timeout=10)
         if log_resp.status_code != 200:
             return default
 
         log_data = log_resp.json()
-        events = log_data.get("events", {}).get("items", [])
+        events   = log_data.get("events", {}).get("items", [])
 
-        last_3 = []
+        last_3          = []
         last_fight_date = None
 
         for event in sorted(events, key=lambda x: x.get("date", ""), reverse=True)[:3]:
-            competitions = event.get("competitions", [])
-            if not competitions:
-                continue
-                
-            result = competitions[0].get("competitors", [])
+            result = event.get("competitions", [{}])[0].get("competitors", [{}])
             winner = None
             method = "DEC"
             for comp in result:
                 if str(comp.get("id")) == str(athlete_id):
                     winner = comp.get("winner", False)
-                    # Method parsing varies — default to DEC if unclear
-                    status = competitions[0].get("status", {})
+                    status = event.get("competitions", [{}])[0].get("status", {})
                     detail = status.get("type", {}).get("detail", "").upper()
                     if "KO" in detail or "TKO" in detail:
                         method = "KO"
@@ -192,22 +167,22 @@ def fetch_fighter_stats(fighter_name: str) -> dict:
 
             if last_fight_date is None:
                 try:
-                    fight_dt = datetime.fromisoformat(event.get("date", "").replace("Z", "+00:00"))
-                    days_since = (datetime.now(timezone.utc) - fight_dt).days
+                    fight_dt    = datetime.fromisoformat(event.get("date", "").replace("Z", "+00:00"))
+                    days_since  = (datetime.now(timezone.utc) - fight_dt).days
                     last_fight_date = days_since
                 except (ValueError, TypeError):
                     pass
 
         return {
-            "name": fighter_name,
-            "last_3_results": last_3,
+            "name":                  fighter_name,
+            "last_3_results":        last_3,
             "days_since_last_fight": last_fight_date,
-            "weight_class": log_data.get("athlete", {}).get("weightClass", {}).get("text", None),
-            "news_flags": []
+            "weight_class":          log_data.get("athlete", {}).get("weightClass", {}).get("text", None),
+            "news_flags":            []
         }
 
     except Exception as e:
-        print(f"[FighterStats] Error fetching stats for {fighter_name}: {e}")
+        print(f"  [FighterStats] Error for {fighter_name}: {e}")
         return default
 
 
@@ -220,30 +195,28 @@ def build_record(market: dict, platform: str, price_data: dict,
                  fighter_a_stats: dict, fighter_b_stats: dict,
                  config: dict) -> dict:
     """
-    Assemble a full schema-compliant record (source_of_truth §4).
-    scoring.py fills in scoring_output. llm_reasoner.py fills in llm_output.
-    alerter.py fills in alert. resolver.py fills in resolution.
+    Assemble a full schema-compliant record.
     """
     return {
-        "market_id": market["market_id"],
-        "platform": platform,
-        "market_url": market.get("market_url", ""),
-        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "question": market.get("question", ""),
-        "sport": "UFC",
-        "event_name": market.get("event_name", ""),
-        "start_time": market.get("start_time", ""),
+        "market_id":   market["market_id"],
+        "platform":    platform,
+        "market_url":  market.get("market_url", ""),
+        "timestamp":   datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "question":    market.get("question", ""),
+        "sport":       "UFC",
+        "event_name":  market.get("event_name", ""),
+        "start_time":  market.get("start_time", ""),
 
         "market_data": {
-            "market_prob": price_data.get("market_prob"),
-            "prob_24h_ago": price_data.get("prob_24h_ago"),
-            "price_change_24h": price_data.get("price_change_24h"),
-            "volume_24h": price_data.get("volume_24h"),
+            "market_prob":          price_data.get("market_prob"),
+            "prob_24h_ago":         price_data.get("prob_24h_ago"),
+            "price_change_24h":     price_data.get("price_change_24h"),
+            "volume_24h":           price_data.get("volume_24h"),
             "price_history_source": price_data.get("price_history_source", "unknown")
         },
 
         "fundamentals": {
-            "reference_prob": reference_prob,
+            "reference_prob":   reference_prob,
             "reference_source": "sportsbook_average_mma"
         },
 
@@ -252,35 +225,31 @@ def build_record(market: dict, platform: str, price_data: dict,
             "fighter_b": fighter_b_stats
         },
 
-        # Filled by scoring.py
         "scoring_output": {
-            "raw_edge": None,
-            "edge_percent": None,
+            "raw_edge":       None,
+            "edge_percent":   None,
             "payout_multiple": None,
-            "llm_called": False
+            "llm_called":     False
         },
 
-        # Filled by llm_reasoner.py
         "llm_output": {
-            "bias_type": None,
-            "raw_confidence": None,
+            "bias_type":            None,
+            "raw_confidence":       None,
             "calibrated_confidence": None,
-            "reason": None
+            "reason":               None
         },
 
-        # Filled by alerter.py
         "alert": {
-            "triggered": False,
-            "risk_mode": config.get("risk_mode", "conservative"),
-            "suggested_bet_pct": None,
+            "triggered":              False,
+            "risk_mode":              config.get("risk_mode", "conservative"),
+            "suggested_bet_pct":      None,
             "suggested_bet_value_zmw": None
         },
 
-        # Filled by resolver.py
         "resolution": {
             "actual_result": None,
-            "settled_at": None,
-            "pnl_zmw": None
+            "settled_at":    None,
+            "pnl_zmw":       None
         }
     }
 
@@ -290,10 +259,6 @@ def build_record(market: dict, platform: str, price_data: dict,
 # ---------------------------------------------------------------------------
 
 def load_existing_snapshots(path: str = "snapshots.jsonl") -> dict:
-    """
-    Load existing snapshots into a dict keyed by market_id
-    for deduplication (same market_id + same calendar date = skip).
-    """
     existing = {}
     if not os.path.exists(path):
         return existing
@@ -301,8 +266,8 @@ def load_existing_snapshots(path: str = "snapshots.jsonl") -> dict:
         for line in f:
             try:
                 record = json.loads(line.strip())
-                mid = record.get("market_id")
-                ts = record.get("timestamp", "")[:10]  # date only
+                mid    = record.get("market_id")
+                ts     = record.get("timestamp", "")[:10]
                 existing[f"{mid}_{ts}"] = True
             except json.JSONDecodeError:
                 continue
@@ -319,12 +284,12 @@ def append_snapshot(record: dict, path: str = "snapshots.jsonl"):
 # ---------------------------------------------------------------------------
 
 def run():
-    config = load_config()
-    platforms = config.get("platforms", ["kalshi"])
-    sport = config.get("sport", "UFC")
+    config    = load_config()
+    platforms = config.get("platforms", ["polymarket"])
+    sport     = config.get("sport", "UFC")
     lookahead = config.get("lookahead_days", 7)
-    api_keys = config.get("api_keys", {})
-    odds_api_key = api_keys.get("the_odds_api", os.environ.get("THE_ODDS_API_KEY", ""))
+    api_keys  = config.get("api_keys", {})
+    odds_key  = api_keys.get("the_odds_api", os.environ.get("THE_ODDS_API_KEY", ""))
 
     # Build adapters
     adapters = []
@@ -334,21 +299,20 @@ def run():
     if "polymarket" in platforms:
         adapters.append(PolymarketAdapter())
 
-    existing = load_existing_snapshots()
-    today = datetime.now(timezone.utc).isoformat()[:10]
+    existing    = load_existing_snapshots()
+    today       = datetime.now(timezone.utc).isoformat()[:10]
     new_records = 0
 
     for adapter in adapters:
         platform = adapter.get_platform_name()
-        platform_lower = platform.lower()
         print(f"\n[Collector] Scanning {platform.upper()} for {sport} markets...")
 
         markets = adapter.list_upcoming_markets(sport, lookahead)
         print(f"[Collector] Found {len(markets)} upcoming markets on {platform}")
 
         for market in markets:
-            market_id = market["market_id"]
-            dedup_key = f"{market_id}_{today}"
+            market_id  = market["market_id"]
+            dedup_key  = f"{market_id}_{today}"
 
             if dedup_key in existing:
                 print(f"  [skip] {market_id} already logged today")
@@ -356,26 +320,33 @@ def run():
 
             print(f"  [fetch] {market_id} — {market.get('question', '')[:60]}")
 
-            # Price snapshot
-            # For Polymarket, use the CLOB token ID for price fetching
-            lookup_id = market.get("_token_id", market_id) if platform_lower == "polymarket" else market_id
-            price_data = adapter.get_price_snapshot(lookup_id)
-            if not price_data or price_data.get("market_prob") is None:
+            # --- Price snapshot ---
+            # For Polymarket use the CLOB token ID stored during discovery
+            if platform == "polymarket" and market.get("_token_id"):
+                price_data = adapter.get_price_snapshot(market["_token_id"])
+                # If CLOB returns None, fall back to inline price from outcomePrices
+                if price_data.get("market_prob") is None and market.get("_inline_prob") is not None:
+                    price_data["market_prob"]          = market["_inline_prob"]
+                    price_data["price_history_source"] = "inline_outcome_prices"
+            else:
+                price_data = adapter.get_price_snapshot(market_id)
+
+            if price_data.get("market_prob") is None:
                 print(f"  [skip] Could not fetch price for {market_id}")
                 continue
 
-            # Reference probability
-            fighter_a = market.get("fighter_a", "")
-            fighter_b = market.get("fighter_b", "")
-            reference_prob = fetch_reference_prob(fighter_a, fighter_b, odds_api_key)
+            # --- Reference probability ---
+            fighter_a     = market.get("fighter_a", "")
+            fighter_b     = market.get("fighter_b", "")
+            reference_prob = fetch_reference_prob(fighter_a, fighter_b, odds_key)
 
-            # Fighter stats
+            # --- Fighter stats ---
             print(f"    Fetching stats: {fighter_a}")
             fa_stats = fetch_fighter_stats(fighter_a)
             print(f"    Fetching stats: {fighter_b}")
             fb_stats = fetch_fighter_stats(fighter_b)
 
-            # Build and log the record
+            # --- Build and log the record ---
             record = build_record(
                 market, platform, price_data,
                 reference_prob, fa_stats, fb_stats, config
