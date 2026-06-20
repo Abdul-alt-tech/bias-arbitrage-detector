@@ -8,6 +8,11 @@ injects llm_output into the record.
 Supports Groq (default, free tier) and Anthropic Claude.
 Provider is configured in config.json under api_keys.llm_provider.
 
+After calibration is applied, also finalizes the dual-mode
+would_alert_conservative / would_alert_aggressive flags from
+scoring.py — these need calibrated_confidence, which only
+exists after this step runs.
+
 Run manually: python llm_reasoner.py
 Called by GitHub Actions scan.yml after scoring.py.
 """
@@ -16,6 +21,8 @@ import json
 import os
 import requests
 from datetime import datetime, timezone
+
+from scoring import finalize_alert_flags
 
 
 def load_config() -> dict:
@@ -29,7 +36,7 @@ def load_config() -> dict:
 
 SYSTEM_PROMPT = """You are a betting bias detector for UFC fight markets. Be skeptical. Default answer = no edge.
 
-Your job is to detect whether a gap between market_prob (prediction market crowd price) and reference_prob (sportsbook baseline) is explained by a known cognitive bias, or by genuine new informati[...]
+Your job is to detect whether a gap between market_prob (prediction market crowd price) and reference_prob (sportsbook baseline) is explained by a known cognitive bias, or by genuine new information.
 
 Rules:
 - If not confident, set confidence = 0
@@ -100,11 +107,11 @@ def call_groq(prompt_input: dict, market_prob: float, reference_prob: float,
 
     resp = requests.post(url, headers=headers, json=payload, timeout=30)
     resp.raise_for_status()
-    
+
     # Validate response is not empty before parsing
     if not resp.content or not resp.text.strip():
         raise ValueError("Empty response from Groq API")
-    
+
     try:
         content = resp.json()["choices"][0]["message"]["content"].strip()
         return parse_llm_response(content)
@@ -140,11 +147,11 @@ def call_anthropic(prompt_input: dict, market_prob: float, reference_prob: float
 
     resp = requests.post(url, headers=headers, json=payload, timeout=30)
     resp.raise_for_status()
-    
+
     # Validate response is not empty before parsing
     if not resp.content or not resp.text.strip():
         raise ValueError("Empty response from Anthropic API")
-    
+
     try:
         content = resp.json()["content"][0]["text"].strip()
         return parse_llm_response(content)
@@ -166,7 +173,7 @@ def parse_llm_response(raw: str) -> dict:
             "raw_confidence": 0.0,
             "reason": "empty_response"
         }
-    
+
     clean = raw.replace("```json", "").replace("```", "").strip()
 
     try:
@@ -262,6 +269,7 @@ def run():
 
     called = 0
     skipped = 0
+    finalized = 0
 
     for i, record in enumerate(records):
         scoring = record.get("scoring_output", {})
@@ -271,7 +279,20 @@ def run():
         # and that haven't been processed yet
         if scoring.get("llm_called") or scoring.get("skipped"):
             continue
+
+        # Even if the ACTIVE mode's edge is too low, the record might
+        # still qualify under the OTHER mode — finalize its dual-mode
+        # alert flags as False (no LLM judgment exists for it) rather
+        # than leaving them as None.
         if edge_pct <= 0:
+            would_qual_agg = scoring.get("would_qualify_aggressive", False)
+            if would_qual_agg:
+                # Aggressive mode would have looked at this market, but
+                # we only call the LLM once per record to control cost —
+                # mark as not alertable under either mode since no LLM
+                # judgment was made.
+                record["scoring_output"]["would_alert_conservative"] = False
+                record["scoring_output"]["would_alert_aggressive"] = False
             skipped += 1
             continue
 
@@ -301,11 +322,19 @@ def run():
                 "reason": result["reason"]
             })
             record["scoring_output"]["llm_called"] = True
+
+            # Finalize would_alert_conservative / would_alert_aggressive
+            # now that calibrated_confidence is known
+            record = finalize_alert_flags(record, config)
+            finalized += 1
+
             records[i] = record
             called += 1
 
             print(f"    bias: {result['bias_type']} | "
                   f"conf: {result['raw_confidence']} -> calibrated: {calibrated} | "
+                  f"would_alert: cons={record['scoring_output']['would_alert_conservative']} "
+                  f"agg={record['scoring_output']['would_alert_aggressive']} | "
                   f"{result['reason'][:80]}")
 
         except Exception as e:
@@ -321,7 +350,8 @@ def run():
         print(f"[LLM] Error writing snapshots.jsonl: {e}")
         return
 
-    print(f"\n[LLM] Done. Called: {called} | Below threshold (skipped): {skipped}")
+    print(f"\n[LLM] Done. Called: {called} | Finalized dual-mode flags: {finalized} | "
+          f"Below threshold (skipped): {skipped}")
 
 
 if __name__ == "__main__":
