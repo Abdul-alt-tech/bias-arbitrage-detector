@@ -4,8 +4,14 @@ dashboard/app.py
 Streamlit dashboard for the Bias Arbitrage Detector.
 Blue-dominant theme (configured in dashboard/.streamlit/config.toml).
 
-Three views:
-  1. Live Flags    — currently triggered alerts, full reasoning
+Four sections in Live Flags:
+  - Risk mode badge (header)
+  - Active-mode alerts (triggered == True, drives real emails)
+  - Aggressive-only candidates (would_alert_aggressive but not
+    would_alert_conservative) — informational, never emailed
+
+Three tabs total:
+  1. Live Flags    — currently triggered alerts + aggressive-only candidates
   2. History/Log   — all scanned markets, filterable
   3. Calibration   — win rate by bias_type, multiplier history, P&L
 
@@ -22,6 +28,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timezone
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+MIN_SAMPLE_SIZE = 20  # Must match calibrator.py's MIN_SAMPLE_SIZE
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -93,6 +105,10 @@ def records_to_df(records: list) -> pd.DataFrame:
             "reference_prob": fund.get("reference_prob"),
             "raw_edge": score.get("raw_edge"),
             "edge_percent": score.get("edge_percent"),
+            "edge_percent_conservative": score.get("edge_percent_conservative"),
+            "edge_percent_aggressive": score.get("edge_percent_aggressive"),
+            "would_alert_conservative": score.get("would_alert_conservative"),
+            "would_alert_aggressive": score.get("would_alert_aggressive"),
             "payout_multiple": score.get("payout_multiple"),
             "llm_called": score.get("llm_called", False),
             "bias_type": llm.get("bias_type"),
@@ -103,6 +119,9 @@ def records_to_df(records: list) -> pd.DataFrame:
             "risk_mode": alert.get("risk_mode"),
             "bet_pct": alert.get("suggested_bet_pct"),
             "bet_zmw": alert.get("suggested_bet_value_zmw"),
+            "other_mode": alert.get("other_mode"),
+            "other_mode_bet_pct": alert.get("other_mode_suggested_bet_pct"),
+            "other_mode_bet_zmw": alert.get("other_mode_suggested_bet_value_zmw"),
             "actual_result": res.get("actual_result"),
             "pnl_zmw": res.get("pnl_zmw"),
             "fighter_a": fa.get("name", ""),
@@ -123,7 +142,8 @@ BLUE_PALETTE = {
     "text": "#e0e8f0",
     "muted": "#90a4b7",
     "win": "#4caf50",
-    "loss": "#ef5350"
+    "loss": "#ef5350",
+    "aggressive": "#ff9800"
 }
 
 
@@ -141,29 +161,48 @@ def plotly_layout(title=""):
 
 
 # ---------------------------------------------------------------------------
-# Header
-# ---------------------------------------------------------------------------
-
-st.markdown("""
-<div style="background: linear-gradient(135deg, #0a1628 0%, #0d2045 100%);
-     padding: 24px; border-radius: 12px; margin-bottom: 24px;
-     border: 1px solid #1e3a6e;">
-  <h1 style="color: #4fc3f7; margin: 0; font-size: 28px;">
-    🔥 Bias Arbitrage Detector
-  </h1>
-  <p style="color: #90a4b7; margin: 8px 0 0 0;">
-    UFC Fight Market Edge Scanner — Paper Trading Mode
-  </p>
-</div>
-""", unsafe_allow_html=True)
-
-# ---------------------------------------------------------------------------
-# Load data
+# Load data (must happen before header, since header reads risk_mode)
 # ---------------------------------------------------------------------------
 
 records = load_snapshots()
 cal = load_calibration()
 df = records_to_df(records) if records else pd.DataFrame()
+
+# ---------------------------------------------------------------------------
+# Header (with risk mode badge)
+# ---------------------------------------------------------------------------
+
+current_risk_mode = "conservative"
+if records:
+    current_risk_mode = records[-1].get("alert", {}).get("risk_mode", "conservative")
+
+risk_color = BLUE_PALETTE["accent"] if current_risk_mode == "conservative" else BLUE_PALETTE["aggressive"]
+risk_label = current_risk_mode.upper()
+
+st.markdown(f"""
+<div style="background: linear-gradient(135deg, #0a1628 0%, #0d2045 100%);
+     padding: 24px; border-radius: 12px; margin-bottom: 24px;
+     border: 1px solid #1e3a6e;">
+  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+    <div>
+      <h1 style="color: #4fc3f7; margin: 0; font-size: 28px;">
+        🔥 Bias Arbitrage Detector
+      </h1>
+      <p style="color: #90a4b7; margin: 8px 0 0 0;">
+        UFC Fight Market Edge Scanner — Paper Trading Mode
+      </p>
+    </div>
+    <div style="background: {risk_color}22; border: 1px solid {risk_color};
+         border-radius: 8px; padding: 8px 16px; text-align: center;">
+      <span style="color: #90a4b7; font-size: 10px; text-transform: uppercase;
+            letter-spacing: 1px; display: block;">Active Risk Mode</span>
+      <span style="color: {risk_color}; font-size: 16px; font-weight: bold;">
+        {risk_label}
+      </span>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Top-level metrics
@@ -206,7 +245,8 @@ with tab1:
         flagged = df[df["triggered"] == True].copy()
 
         if flagged.empty:
-            st.info("No active alerts right now. The scanner is running — check back after the next UFC event is priced up.")
+            st.info("No active alerts right now under the active risk mode. "
+                    "The scanner is running — check back after the next UFC event is priced up.")
         else:
             # Sort by calibrated_confidence desc
             flagged = flagged.sort_values("calibrated_confidence", ascending=False)
@@ -291,6 +331,71 @@ with tab1:
 
                     st.markdown("---")
 
+        # ----------------------------------------------------------------
+        # Aggressive-only candidates section
+        # Markets that would alert under aggressive mode but NOT under
+        # conservative — informational only, never emailed regardless
+        # of which mode is currently active.
+        # ----------------------------------------------------------------
+        agg_only = df[
+            (df["would_alert_aggressive"] == True) &
+            (df["would_alert_conservative"] == False)
+        ].copy()
+
+        if not agg_only.empty:
+            st.markdown("&nbsp;")
+            st.markdown(f"""
+            <div style="background: {BLUE_PALETTE['aggressive']}11;
+                 border: 1px solid {BLUE_PALETTE['aggressive']};
+                 border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
+              <span style="color: {BLUE_PALETTE['aggressive']}; font-weight: bold;">
+                ⚡ Aggressive-Only Candidates
+              </span>
+              <span style="color: #90a4b7; font-size: 13px;">
+                — would alert under aggressive mode, but not under conservative.
+                Never emailed. For visibility only.
+              </span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            agg_only = agg_only.sort_values("calibrated_confidence", ascending=False)
+
+            for _, row in agg_only.iterrows():
+                with st.container():
+                    ep_agg = row.get("edge_percent_aggressive") or 0
+                    cc = row.get("calibrated_confidence") or 0
+                    other_bet_zmw = row.get("other_mode_bet_zmw") or row.get("bet_zmw") or 0
+                    other_bet_pct = row.get("other_mode_bet_pct") or row.get("bet_pct") or 0
+
+                    st.markdown(f"""
+                    <div style="background: #0f1f3d; border-radius: 10px; padding: 16px;
+                         margin-bottom: 12px; border: 1px solid #1e3a6e;
+                         border-left: 4px solid {BLUE_PALETTE['aggressive']};">
+                      <div style="display: flex; justify-content: space-between; align-items: start;">
+                        <div>
+                          <span style="background: {BLUE_PALETTE['aggressive']}33; color: {BLUE_PALETTE['aggressive']};
+                                padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: bold;">
+                            {row.get('platform', '')}
+                          </span>
+                          <span style="background: #0d47a1; color: #4fc3f7; padding: 2px 10px;
+                                border-radius: 12px; font-size: 11px; margin-left: 8px;
+                                text-transform: capitalize;">
+                            {row.get('bias_type', '')}
+                          </span>
+                        </div>
+                        <span style="color: #90a4b7; font-size: 12px;">{row.get('event_name', '')}</span>
+                      </div>
+                      <h4 style="color: #e0e8f0; margin: 10px 0 6px 0; font-size: 15px;">
+                        {row.get('question', '')}
+                      </h4>
+                      <span style="color: #90a4b7; font-size: 12px;">
+                        Edge (aggressive): <b style="color: {BLUE_PALETTE['aggressive']};">{ep_agg:.1f}%</b>
+                        &nbsp;|&nbsp; Confidence: <b>{cc:.0%}</b>
+                        &nbsp;|&nbsp; Would-be Kelly bet: <b>{bet_pct:.1f}% = {other_bet_zmw:.2f} ZMW</b>
+                      </span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
 
 # ============================================================
 # TAB 2: HISTORY / LOG
@@ -307,7 +412,7 @@ with tab2:
             bias_filter = st.selectbox("Bias Type", bias_options)
 
         with fc2:
-            status_options = ["All", "Triggered", "Not Triggered", "Resolved"]
+            status_options = ["All", "Triggered", "Not Triggered", "Aggressive-Only", "Resolved"]
             status_filter = st.selectbox("Status", status_options)
 
         with fc3:
@@ -321,6 +426,11 @@ with tab2:
             filtered = filtered[filtered["triggered"] == True]
         elif status_filter == "Not Triggered":
             filtered = filtered[filtered["triggered"] == False]
+        elif status_filter == "Aggressive-Only":
+            filtered = filtered[
+                (filtered["would_alert_aggressive"] == True) &
+                (filtered["would_alert_conservative"] == False)
+            ]
         elif status_filter == "Resolved":
             filtered = filtered[filtered["actual_result"].notna()]
         if platform_filter != "All":
@@ -330,8 +440,9 @@ with tab2:
 
         display_cols = [
             "timestamp", "platform", "question", "market_prob",
-            "reference_prob", "edge_percent", "payout_multiple",
-            "bias_type", "calibrated_confidence", "triggered",
+            "reference_prob", "edge_percent_conservative", "edge_percent_aggressive",
+            "payout_multiple", "bias_type", "calibrated_confidence",
+            "would_alert_conservative", "would_alert_aggressive", "triggered",
             "actual_result", "pnl_zmw"
         ]
         available = [c for c in display_cols if c in filtered.columns]
