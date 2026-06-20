@@ -8,6 +8,13 @@ and updates the record in place.
 Records where reference_prob or market_prob is None are skipped
 (marked as scoring_output.skipped = True).
 
+Dual risk_mode visibility: every record is checked against BOTH
+conservative and aggressive thresholds (would_alert_conservative /
+would_alert_aggressive), regardless of which mode is "active" in
+config.json. Only the active mode's thresholds drive the actual
+Kelly bet sizing and the alerter's email decision — the second
+mode's flag is purely informational, surfaced on the dashboard.
+
 Run manually: python scoring.py
 Called by GitHub Actions scan.yml after data_collector.py.
 """
@@ -72,9 +79,20 @@ def compute_kelly_bet(edge_percent: float, payout_multiple: float,
     return round(capped, 4)
 
 
+def compute_edge_percent_for_mode(raw_edge: float, config: dict, mode: str) -> float:
+    """
+    Compute edge_percent against a SPECIFIC mode's threshold,
+    regardless of which mode is currently "active" in config.
+    """
+    threshold = config["edge_threshold_pct"][mode] / 100.0
+    return round((raw_edge - threshold) * 100, 2)
+
+
 def score_record(record: dict, config: dict) -> dict:
     """
     Compute and inject scoring_output fields into a record.
+    Also computes would_alert_conservative / would_alert_aggressive
+    so both modes are visible regardless of the active risk_mode.
     Returns the updated record.
     """
     risk_mode = config.get("risk_mode", "conservative")
@@ -98,17 +116,78 @@ def score_record(record: dict, config: dict) -> dict:
     kelly_frac = compute_kelly_bet(edge_percent, payout_multiple, bankroll, kelly_fraction)
     suggested_bet_zmw = round(bankroll * kelly_frac, 2)
 
+    # --- Dual-mode visibility: compute edge% under BOTH thresholds ---
+    edge_percent_conservative = compute_edge_percent_for_mode(raw_edge, config, "conservative")
+    edge_percent_aggressive = compute_edge_percent_for_mode(raw_edge, config, "aggressive")
+
+    # Also compute what the Kelly bet would look like under the
+    # OTHER mode, purely for dashboard visibility (not used for alerts)
+    other_mode = "aggressive" if risk_mode == "conservative" else "conservative"
+    other_kelly_fraction = config["kelly_fraction"][other_mode]
+    other_edge_percent = edge_percent_aggressive if risk_mode == "conservative" else edge_percent_conservative
+    other_kelly_frac = compute_kelly_bet(other_edge_percent, payout_multiple, bankroll, other_kelly_fraction)
+    other_suggested_bet_zmw = round(bankroll * other_kelly_frac, 2)
+
     record["scoring_output"].update({
         "raw_edge": raw_edge,
         "edge_percent": edge_percent,
         "payout_multiple": payout_multiple,
         "llm_called": False,
-        "skipped": False
+        "skipped": False,
+        # Dual-mode fields — informational only, do not drive alerts
+        "edge_percent_conservative": edge_percent_conservative,
+        "edge_percent_aggressive": edge_percent_aggressive,
+        "would_qualify_conservative": edge_percent_conservative > 0,
+        "would_qualify_aggressive": edge_percent_aggressive > 0
     })
 
-    # Pre-fill alert sizing (alerter.py will set triggered=True if thresholds met)
+    # Pre-fill alert sizing for the ACTIVE mode (alerter.py uses this)
     record["alert"]["suggested_bet_pct"] = round(kelly_frac * 100, 2)
     record["alert"]["suggested_bet_value_zmw"] = suggested_bet_zmw
+
+    # Informational: what the bet would look like under the other mode
+    record["alert"]["other_mode"] = other_mode
+    record["alert"]["other_mode_suggested_bet_pct"] = round(other_kelly_frac * 100, 2)
+    record["alert"]["other_mode_suggested_bet_value_zmw"] = other_suggested_bet_zmw
+
+    # would_alert_* requires calibrated_confidence from the LLM step,
+    # which hasn't run yet at this point in the pipeline. These get
+    # finalized in llm_reasoner.py once confidence is known — see
+    # finalize_alert_flags() below, called from llm_reasoner.py.
+    record["scoring_output"].setdefault("would_alert_conservative", None)
+    record["scoring_output"].setdefault("would_alert_aggressive", None)
+
+    return record
+
+
+def finalize_alert_flags(record: dict, config: dict) -> dict:
+    """
+    Called by llm_reasoner.py AFTER calibrated_confidence is known.
+    Sets would_alert_conservative / would_alert_aggressive based on
+    each mode's own edge% AND confidence_cutoff — independent of
+    which mode is currently active.
+    """
+    llm = record.get("llm_output", {})
+    bias_type = llm.get("bias_type")
+    calibrated_confidence = llm.get("calibrated_confidence")
+
+    if bias_type is None or bias_type == "none" or calibrated_confidence is None:
+        record["scoring_output"]["would_alert_conservative"] = False
+        record["scoring_output"]["would_alert_aggressive"] = False
+        return record
+
+    edge_conservative = record["scoring_output"].get("edge_percent_conservative", 0) or 0
+    edge_aggressive = record["scoring_output"].get("edge_percent_aggressive", 0) or 0
+
+    conf_cutoff_conservative = config["confidence_cutoff"]["conservative"]
+    conf_cutoff_aggressive = config["confidence_cutoff"]["aggressive"]
+
+    record["scoring_output"]["would_alert_conservative"] = (
+        edge_conservative > 0 and calibrated_confidence >= conf_cutoff_conservative
+    )
+    record["scoring_output"]["would_alert_aggressive"] = (
+        edge_aggressive > 0 and calibrated_confidence >= conf_cutoff_aggressive
+    )
 
     return record
 
@@ -145,6 +224,7 @@ def run():
     scored = 0
     skipped = 0
     llm_candidates = 0
+    aggressive_only_candidates = 0
 
     updated_records = []
     for record in records:
@@ -161,12 +241,20 @@ def run():
         else:
             scored += 1
             edge_pct = record["scoring_output"]["edge_percent"]
+            would_qual_agg = record["scoring_output"].get("would_qualify_aggressive", False)
+            would_qual_cons = record["scoring_output"].get("would_qualify_conservative", False)
+
             if edge_pct > 0:
                 llm_candidates += 1
                 print(f"  [candidate] {record['market_id']} — "
                       f"edge: {edge_pct:.1f}% | "
                       f"payout: {record['scoring_output']['payout_multiple']}x | "
                       f"bet: {record['alert']['suggested_bet_value_zmw']} ZMW")
+            elif would_qual_agg and not would_qual_cons:
+                aggressive_only_candidates += 1
+                print(f"  [aggressive-only] {record['market_id']} — "
+                      f"edge_aggressive: {record['scoring_output']['edge_percent_aggressive']:.1f}% "
+                      f"(below conservative threshold)")
 
     # Rewrite snapshots.jsonl with updated records
     try:
@@ -178,7 +266,8 @@ def run():
         return
 
     print(f"\n[Scoring] Done. Scored: {scored} | Skipped: {skipped} | "
-          f"LLM candidates (edge > {edge_threshold_pct}%): {llm_candidates}")
+          f"LLM candidates (active mode, edge > {edge_threshold_pct}%): {llm_candidates} | "
+          f"Aggressive-only candidates: {aggressive_only_candidates}")
 
 
 if __name__ == "__main__":
