@@ -39,12 +39,12 @@
     }
   },
   "global_stats": {
-    "total_scanned": 99,
+    "total_scanned": 112,
     "total_flagged": 0,
     "total_resolved": 0,
     "overall_winrate": null,
     "total_pnl_zmw": 0
   },
   "confidence_buckets": {},
-  "last_updated": "2026-06-25T22:18:02.079730Z"
+  "last_updated": "2026-06-26T02:48:21.043721Z"
 }
