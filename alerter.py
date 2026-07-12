@@ -230,25 +230,62 @@ def run():
         print("[Alerter] No valid records found in snapshots.jsonl")
         return
 
+    # Load alerted IDs from alerted_ids.json (repo root). Treat missing/empty file as empty list.
+    alerted_ids_path = "alerted_ids.json"
+    alerted_ids = []
+    try:
+        if os.path.exists(alerted_ids_path):
+            with open(alerted_ids_path) as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    # Normalize to strings
+                    alerted_ids = [str(x) for x in data if x is not None]
+    except json.JSONDecodeError:
+        # Treat malformed JSON as empty list
+        alerted_ids = []
+    except Exception as e:
+        print(f"[Alerter] Warning: Could not read {alerted_ids_path}: {e}")
+        alerted_ids = []
+
     alerted = 0
     checked = 0
+    newly_alerted = False
 
     for i, record in enumerate(records):
         checked += 1
         if not should_alert(record, config):
             continue
 
-        print(f"  [Alert] {record['market_id']} — {record.get('question', '')[:60]}")
+        market_id = record.get("market_id")
+        if not market_id:
+            continue
+
+        # Skip sending duplicate alerts for market_ids already recorded in alerted_ids.json
+        if market_id in alerted_ids:
+            print(f"  [Alert] Skipping {market_id} — already alerted in a previous run")
+            # Mark as triggered to keep snapshots consistent
+            records[i].setdefault("alert", {})["triggered"] = True
+            records[i]["alert"]["triggered_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            records[i]["alert"]["email_sent"] = False
+            continue
+
+        print(f"  [Alert] {market_id} — {record.get('question', '')[:60]}")
 
         subject, html = build_email_html(record, config)
         sent = send_email(subject, html, config)
 
         # Mark as triggered regardless of email success
-        # (so we don't re-alert on next run)
-        records[i]["alert"]["triggered"] = True
+        records[i].setdefault("alert", {})["triggered"] = True
         records[i]["alert"]["triggered_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         records[i]["alert"]["email_sent"] = sent
         alerted += 1
+
+        # Record this market_id in alerted_ids.json so we won't re-alert next run
+        try:
+            alerted_ids.append(market_id)
+            newly_alerted = True
+        except Exception:
+            pass
 
     # Rewrite snapshots.jsonl
     try:
@@ -258,6 +295,14 @@ def run():
     except Exception as e:
         print(f"[Alerter] Error writing snapshots.jsonl: {e}")
         return
+
+    # Save alerted_ids.json if we added any
+    if newly_alerted:
+        try:
+            with open(alerted_ids_path, "w") as f:
+                json.dump(alerted_ids, f, indent=2)
+        except Exception as e:
+            print(f"[Alerter] Error writing {alerted_ids_path}: {e}")
 
     print(f"\n[Alerter] Done. Checked: {checked} | Alerted: {alerted}")
 
