@@ -277,9 +277,32 @@ with tab1:
                     </div>
                     """, unsafe_allow_html=True)
 
-                    c1, c2, c3, c4, c5 = st.columns(5)
+                    # Determine which fighter to back based on market_prob vs reference_prob
                     mp = row.get("market_prob") or 0
                     rp = row.get("reference_prob") or 0
+                    fighter_a = row.get("fighter_a", "Fighter A")
+                    fighter_b = row.get("fighter_b", "Fighter B")
+
+                    if mp < rp:
+                        # Crowd undervaluing Fighter A
+                        bet_on_fighter = fighter_a
+                    else:
+                        # Crowd overvaluing Fighter A, value on Fighter B
+                        bet_on_fighter = fighter_b
+
+                    st.markdown(f"""
+                    <div style="background: #0a1628; border-radius: 8px; padding: 14px;
+                         margin-bottom: 16px; border: 1px solid #4caf50;
+                         border-left: 4px solid #4caf50;">
+                      <span style="color: #4caf50; font-size: 12px; text-transform: uppercase;
+                            letter-spacing: 1px; font-weight: bold;">Bet On</span><br>
+                      <span style="color: #4caf50; font-size: 22px; font-weight: bold;">
+                        ✅ {bet_on_fighter}
+                      </span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    c1, c2, c3, c4, c5 = st.columns(5)
                     ep = row.get("edge_percent") or 0
                     pm = row.get("payout_multiple") or 0
                     cc = row.get("calibrated_confidence") or 0
