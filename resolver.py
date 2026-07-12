@@ -13,6 +13,7 @@ Called by GitHub Actions scan.yml at the end of each run.
 
 import json
 import os
+import re
 import requests
 from datetime import datetime, timezone, timedelta
 
@@ -26,6 +27,39 @@ def load_config() -> dict:
 # Result fetcher (ESPN MMA)
 # ---------------------------------------------------------------------------
 
+def _normalize(text: str) -> str:
+    if not text:
+        return ""
+    # keep alphanumerics and spaces, lowercased
+    return re.sub(r"[^a-z0-9\s]", "", text.lower())
+
+
+def _fighter_tokens(name: str):
+    # Return tokens of reasonable length to match on (avoid tiny tokens)
+    name = _normalize(name)
+    return [t for t in name.split() if len(t) >= 3]
+
+
+def _competitor_matches_fighter(comp_name: str, fighter_name: str) -> bool:
+    """
+    Returns True if comp_name (already normalized) contains a substring
+    or token from fighter_name (normalized). This is a permissive,
+    case-insensitive partial match helper.
+    """
+    if not comp_name or not fighter_name:
+        return False
+
+    fighter_full = _normalize(fighter_name)
+    if fighter_full and fighter_full in comp_name:
+        return True
+
+    for tok in _fighter_tokens(fighter_name):
+        if tok in comp_name:
+            return True
+
+    return False
+
+
 def fetch_fight_result(fighter_a: str, fighter_b: str) -> dict:
     """
     Attempt to fetch the result of a completed UFC fight
@@ -36,8 +70,10 @@ def fetch_fight_result(fighter_a: str, fighter_b: str) -> dict:
       - method (str): KO/TKO/SUB/DEC/NC/None
       - confirmed (bool): whether result was found
 
-    ⚠️ ESPN MMA API endpoint/format needs verification in Phase 0.
-    This implementation uses the public scoreboard endpoint.
+    This implementation uses the public scoreboard endpoint but
+    matches fights only when BOTH fighter names from the market
+    appear (case-insensitive partial match) among the competition's
+    competitors. If no clear match is found, returns confirmed=False.
     """
     try:
         # ESPN MMA scoreboard — shows recent completed events
@@ -52,36 +88,78 @@ def fetch_fight_result(fighter_a: str, fighter_b: str) -> dict:
         data = resp.json()
         events = data.get("events", [])
 
-        fa_last = fighter_a.split()[-1].lower()
-        fb_last = fighter_b.split()[-1].lower()
+        fa_norm = _normalize(fighter_a)
+        fb_norm = _normalize(fighter_b)
 
         for event in events:
             for competition in event.get("competitions", []):
                 competitors = competition.get("competitors", [])
-                names = [c.get("athlete", {}).get("displayName", "").lower()
-                         for c in competitors]
+                # list of normalized competitor display names
+                comp_names = [(_normalize(c.get("athlete", {}).get("displayName", "") or ""),
+                               c) for c in competitors]
 
-                if any(fa_last in n for n in names) and any(fb_last in n for n in names):
-                    status = competition.get("status", {}).get("type", {})
-                    if not status.get("completed", False):
-                        continue
+                # For each fighter, find indices of matching competitors
+                matched_indices_a = [idx for idx, (name, _) in enumerate(comp_names)
+                                     if _fighter_tokens(fighter_a) and _competitor_matches_fighter(name, fighter_a)]
+                matched_indices_b = [idx for idx, (name, _) in enumerate(comp_names)
+                                     if _fighter_tokens(fighter_b) and _competitor_matches_fighter(name, fighter_b)]
 
-                    for comp in competitors:
-                        if comp.get("winner"):
-                            winner_name = comp.get("athlete", {}).get("displayName", "")
-                            detail = status.get("detail", "").upper()
-                            method = "DEC"
-                            if "KO" in detail or "TKO" in detail:
-                                method = "KO"
-                            elif "SUB" in detail:
-                                method = "SUB"
-                            elif "NC" in detail or "NO CONTEST" in detail:
-                                method = "NC"
-                            return {
-                                "winner": winner_name,
-                                "method": method,
-                                "confirmed": True
-                            }
+                # Require both fighters to match distinct competitors in this competition
+                match_found = False
+                chosen_a_idx = chosen_b_idx = None
+                for ia in matched_indices_a:
+                    for ib in matched_indices_b:
+                        if ia != ib:
+                            chosen_a_idx, chosen_b_idx = ia, ib
+                            match_found = True
+                            break
+                    if match_found:
+                        break
+
+                if not match_found:
+                    # No match in this competition for both fighters
+                    continue
+
+                # Ensure competition is completed
+                status = competition.get("status", {}).get("type", {})
+                if not status.get("completed", False):
+                    continue
+
+                # Find winner among competitors and confirm it matches one of our two fighters
+                winner_name = None
+                for comp in competitors:
+                    if comp.get("winner"):
+                        winner_name = comp.get("athlete", {}).get("displayName", "")
+                        break
+
+                if not winner_name:
+                    # No winner flagged; can't confirm
+                    return {"winner": None, "method": None, "confirmed": False}
+
+                winner_norm = _normalize(winner_name)
+
+                # Verify winner corresponds to one of the matched competitors
+                a_comp_name = comp_names[chosen_a_idx][0]
+                b_comp_name = comp_names[chosen_b_idx][0]
+                if not (_competitor_matches_fighter(winner_norm, fighter_a) or
+                        _competitor_matches_fighter(winner_norm, fighter_b)):
+                    # Winner doesn't match either fighter in the market -> do not assign
+                    return {"winner": None, "method": None, "confirmed": False}
+
+                detail = status.get("detail", "").upper()
+                method = "DEC"
+                if "KO" in detail or "TKO" in detail:
+                    method = "KO"
+                elif "SUB" in detail:
+                    method = "SUB"
+                elif "NC" in detail or "NO CONTEST" in detail:
+                    method = "NC"
+
+                return {
+                    "winner": winner_name,
+                    "method": method,
+                    "confirmed": True
+                }
 
         return {"winner": None, "method": None, "confirmed": False}
 
