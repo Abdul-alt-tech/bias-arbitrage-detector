@@ -74,7 +74,7 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Actions"
-          touch snapshots.jsonl calibration.json
-          git add snapshots.jsonl calibration.json
+          touch snapshots.jsonl calibration.json alerted_ids.json
+          git add snapshots.jsonl calibration.json alerted_ids.json
           git diff --staged --quiet || git commit -m "scan: $(date -u '+%Y-%m-%d %H:%M UTC')"
           git push
