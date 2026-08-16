@@ -39,8 +39,8 @@
     }
   },
   "global_stats": {
-    "total_scanned": 777,
-    "total_flagged": 4,
+    "total_scanned": 796,
+    "total_flagged": 5,
     "total_resolved": 2,
     "overall_winrate": 0.5,
     "total_pnl_zmw": -38.23
@@ -52,5 +52,5 @@
       "winrate": 0.5
     }
   },
-  "last_updated": "2026-08-15T21:15:38.756187Z"
+  "last_updated": "2026-08-16T00:57:18.398472Z"
 }
