@@ -33,24 +33,24 @@
     },
     "overreaction": {
       "multiplier": 1.0,
-      "sample_size": 2,
-      "actual_winrate": 0.5,
+      "sample_size": 3,
+      "actual_winrate": 0.6667,
       "implied_winrate": 0.74
     }
   },
   "global_stats": {
     "total_scanned": 940,
     "total_flagged": 6,
-    "total_resolved": 2,
-    "overall_winrate": 0.5,
-    "total_pnl_zmw": -38.23
+    "total_resolved": 3,
+    "overall_winrate": 0.6667,
+    "total_pnl_zmw": 11.77
   },
   "confidence_buckets": {
     "80-90": {
-      "total": 2,
-      "wins": 1,
-      "winrate": 0.5
+      "total": 3,
+      "wins": 2,
+      "winrate": 0.6667
     }
   },
-  "last_updated": "2026-08-23T00:58:19.953172Z"
+  "last_updated": "2026-08-23T03:44:41.758497Z"
 }
