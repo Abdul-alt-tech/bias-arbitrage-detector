@@ -39,7 +39,7 @@
     }
   },
   "global_stats": {
-    "total_scanned": 1672,
+    "total_scanned": 1686,
     "total_flagged": 6,
     "total_resolved": 3,
     "overall_winrate": 0.6667,
@@ -52,5 +52,5 @@
       "winrate": 0.6667
     }
   },
-  "last_updated": "2026-10-01T20:03:39.605757Z"
+  "last_updated": "2026-10-02T00:26:37.428880Z"
 }
